@@ -70,6 +70,28 @@
   let lastDownAt = 0, lastDownPiece = null;   // для распознавания двойного нажатия «вниз»
   let wallHit = false;                          // фигура уже упёрлась вбок (чтобы не вибрировать каждый кадр)
 
+  // ---------- Плавное движение ----------
+  // Логика игры остаётся по клеткам; на экране фигура рисуется в позиции view,
+  // которая плавно догоняет настоящую. Вниз фигура падает непрерывно.
+  const SMOOTH_X_MS = 30;   // как быстро фигура доезжает до клетки по горизонтали
+  const SMOOTH_Y_MS = 15;   // то же по вертикали (меньше — чтобы не отставала на высоких скоростях)
+  let view = null;          // { x, y } — экранная позиция текущей фигуры в клетках (дробная)
+
+  function updateView(dt) {
+    if (!cur || !view) return;
+    let ty = cur.y;
+    // пока под фигурой свободно, рисуем её между клетками пропорционально времени до следующего шага
+    if (state === 'play' && !collides(cur.m, cur.x, cur.y + 1)) {
+      ty += Math.min(dropAcc / dropInterval(), 0.999);
+    }
+    const kx = 1 - Math.exp(-dt / SMOOTH_X_MS);
+    const ky = 1 - Math.exp(-dt / SMOOTH_Y_MS);
+    view.x += (cur.x - view.x) * kx;
+    view.y += (ty - view.y) * ky;
+    if (Math.abs(cur.x - view.x) < 0.01) view.x = cur.x;
+    if (Math.abs(ty - view.y) < 0.01) view.y = ty;
+  }
+
   // ---------- Вибрация ----------
   // Браузер не даёт менять силу вибрации, только длительность: чем дольше, тем ощутимее.
   // Работает на Android; iPhone вибрацию для сайтов не поддерживает.
@@ -202,6 +224,7 @@
   // ---------- Ход игры ----------
   const isMode = id => MODES[mode].id === id;
   const gravityMs = () => GRAVITY[Math.min(level, GRAVITY.length - 1)];
+  const dropInterval = () => (soft ? Math.min(SOFT_MS, gravityMs()) : gravityMs());
   const riseInterval = () => Math.max(3500, 13000 - level * 850);
 
   function newGame() {
@@ -227,6 +250,7 @@
     while (m[top].every(v => !v)) top++;
     cur = { type, m, x: Math.floor((COLS - m.length) / 2), y: -top };
     dropAcc = 0; lockAcc = 0; lockResets = 0; wallHit = false;
+    view = { x: cur.x, y: cur.y };   // новая фигура появляется сразу на месте, без подлёта
     if (collides(cur.m, cur.x, cur.y)) gameOver();
   }
 
@@ -336,8 +360,7 @@
     }
 
     // падение
-    const grav = gravityMs();
-    const interval = soft ? Math.min(SOFT_MS, grav) : grav;
+    const interval = dropInterval();
     dropAcc += dt;
     while (dropAcc >= interval) {
       dropAcc -= interval;
@@ -371,6 +394,7 @@
     if (state === 'play') updatePlay(dt);
     else if (state === 'clear') { clearAcc += dt; if (clearAcc >= CLEAR_MS) finishClear(); }
     else if (state === 'over') overAcc += dt;
+    updateView(dt);
   }
 
   // ---------- Управление ----------
@@ -570,9 +594,6 @@
 
   function drawBoard() {
     const lit = board.map(r => r.map(v => (v ? 1 : 0)));
-    if (cur && (state === 'play' || state === 'over')) {
-      eachCell(cur, (x, y) => { if (y >= 0 && y < ROWS) lit[y][x] = 1; });
-    }
     if (state === 'clear' && Math.floor(clearAcc / 90) % 2 === 1) {
       for (const y of clearRows) lit[y].fill(0);
     }
@@ -584,6 +605,19 @@
     for (let y = 0; y < ROWS; y++)
       for (let x = 0; x < COLS; x++)
         drawCell(BX + x * CELL, BY + y * CELL, lit[y][x] ? COL.dark : COL.off);
+    if (cur && view && (state === 'play' || state === 'over')) drawPiece();
+  }
+
+  // Текущая фигура в плавной (дробной) позиции; то, что выше стакана, обрезается.
+  function drawPiece() {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(BX, BY, COLS * CELL, ROWS * CELL);
+    ctx.clip();
+    for (let y = 0; y < cur.m.length; y++)
+      for (let x = 0; x < cur.m.length; x++)
+        if (cur.m[y][x]) drawCell(BX + (view.x + x) * CELL, BY + (view.y + y) * CELL, COL.dark);
+    ctx.restore();
   }
 
   function clearBoardArea() {
