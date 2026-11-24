@@ -7,8 +7,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Brickfall">
 <title>Brickfall</title>
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -40,6 +43,10 @@
   </div>
 
   <div class="pills">
+    <div class="pill-wrap install hidden" id="installWrap">
+      <button class="pill pill-install" id="installBtn" aria-label="Установить приложение"></button>
+      <span>УСТАНОВИТЬ</span>
+    </div>
     <div class="pill-wrap">
       <button class="pill" data-key="sound" id="soundBtn" aria-label="Звук"></button>
       <span>ЗВУК</span>
@@ -52,6 +59,17 @@
 
   <p class="hint">← → движение · ↑ поворот · ↓ ускорение · Enter старт/пауза · M звук</p>
 </main>
+
+<div class="install-help" id="installHelp" hidden>
+  <div class="install-card" role="dialog" aria-labelledby="installTitle">
+    <h2 id="installTitle">Установить Brickfall</h2>
+    <p id="installHelpText"></p>
+    <p class="install-note">После установки игра запускается с главного экрана и работает без интернета.</p>
+    <button data-close>Понятно</button>
+  </div>
+</div>
+
 <script src="game.js"></script>
+<script src="pwa.js"></script>
 </body>
 </html>

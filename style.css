@@ -164,9 +164,52 @@ canvas {
 }
 
 .pills {
-  display: flex;
-  gap: calc(var(--u) * 10);
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto auto 1fr;
+  column-gap: calc(var(--u) * 10);
   margin-top: calc(var(--u) * 4);
+}
+.pill-wrap.install { justify-self: start; }
+.pill-wrap.hidden { visibility: hidden; }
+.pill-install { background: #5f7a46; box-shadow: 0 calc(var(--u) * .5) 0 #3e5230; }
+.pill-install:active { box-shadow: none; transform: rotate(-22deg) translateY(calc(var(--u) * .4)); }
+
+.install-help {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 12, 16, .7);
+}
+.install-help[hidden] { display: none; }
+.install-card {
+  max-width: 340px;
+  padding: 20px 22px;
+  border-radius: 14px;
+  background: #e6e3da;
+  color: #26301a;
+  font-size: 16px;
+  line-height: 1.45;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+}
+.install-card h2 { margin: 0 0 10px; font-size: 19px; color: #34386a; }
+.install-card p { margin: 0 0 10px; }
+.install-card .install-note { font-size: 14px; color: #5b5a55; }
+.install-card button {
+  margin-top: 6px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: #34386a;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 .pill-wrap {
   display: flex;

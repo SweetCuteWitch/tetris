@@ -11,7 +11,7 @@
 
   const MODES = [
     { id: 'classic', name: 'КЛАССИКА', desc: ['Обычная игра'] },
-    { id: 'shift',   name: 'СДВИГ',    desc: ['Стакан время от', 'времени съезжает'] },
+    { id: 'shift',   name: 'СДВИГ',    desc: ['После каждой фигуры', 'стакан едет вправо'] },
     { id: 'rise',    name: 'ПОДЪЁМ',   desc: ['Снизу растут', 'новые ряды'] },
   ];
 
@@ -19,7 +19,8 @@
   const GRAVITY = [800, 720, 630, 550, 470, 380, 300, 220, 140, 100,
                    85, 85, 85, 70, 70, 70, 55, 55, 55, 40,
                    40, 40, 40, 40, 40, 40, 40, 40, 40, 25];
-  const SOFT_MS = 25;      // скорость при зажатой кнопке «вниз»
+  const SOFT_MS = 60;      // скорость при зажатой кнопке «вниз» (мс на клетку)
+  const SOFT_LOCK_MS = 150; // фиксация на дне при зажатой кнопке «вниз»
   const LOCK_MS = 450;     // задержка перед фиксацией фигуры
   const DAS = 160, ARR = 45;
   const CLEAR_MS = 360;
@@ -35,7 +36,9 @@
     J: [[1,0,0],[1,1,1],[0,0,0]],
     L: [[0,0,1],[1,1,1],[0,0,0]],
   };
-  const KICKS = [[0,0],[-1,0],[1,0],[0,-1],[-2,0],[2,0]];
+  // Смещения при повороте, по порядку. Сначала пробуем опустить фигуру
+  // (чтобы она «заползала» в дыру), потом сдвинуть вбок, поднять — в последнюю очередь.
+  const KICKS = [[0,0],[0,1],[-1,1],[1,1],[-1,0],[1,0],[-2,0],[2,0],[0,-1]];
 
   // ---------- Хранилище ----------
   const store = {
@@ -64,7 +67,7 @@
   let best = store.get(hiKey(mode), 0), newBest = false;
   let dropAcc = 0, lockAcc = 0, lockResets = 0, soft = false;
   let dirs = [], held = 0, dasAcc = 0;
-  let sinceShift = 0, shiftFx = 0, shiftDir = 0;
+  let shiftFx = 0;
   let riseAcc = 0, pendingRise = 0;
   let clearRows = [], clearAcc = 0, overAcc = 0;
   let blink = 0;
@@ -99,7 +102,7 @@
     clear:  [[523, 0, .07], [659, .07, .07], [784, .14, .1]],
     quad:   [[523, 0, .07], [659, .07, .07], [784, .14, .07], [1047, .21, .22]],
     level:  [[392, 0, .08], [523, .08, .08], [659, .16, .08], [784, .24, .18]],
-    shift:  [[180, 0, .05], [140, .05, .09]],
+    shift:  [[150, .06, .04]],
     warn:   [[880, 0, .03]],
     rise:   [[90, 0, .12]],
     start:  [[440, 0, .06], [660, .07, .1]],
@@ -125,9 +128,10 @@
     return bag.pop();
   }
 
-  function rotateCW(m) {
+  // поворот против часовой стрелки
+  function rotateCCW(m) {
     const n = m.length;
-    return m.map((row, y) => row.map((_, x) => m[n - 1 - x][y]));
+    return m.map((row, y) => row.map((_, x) => m[x][n - 1 - y]));
   }
 
   function collides(m, px, py) {
@@ -162,7 +166,7 @@
 
   function rotate() {
     if (cur.type === 'O') { sfx('rotate'); return; }
-    const rm = rotateCW(cur.m);
+    const rm = rotateCCW(cur.m);
     for (const [kx, ky] of KICKS) {
       if (!collides(rm, cur.x + kx, cur.y + ky)) {
         cur.m = rm;
@@ -178,7 +182,6 @@
   // ---------- Ход игры ----------
   const isMode = id => MODES[mode].id === id;
   const gravityMs = () => GRAVITY[Math.min(level, GRAVITY.length - 1)];
-  const shiftEvery = () => (level < 4 ? 6 : level < 8 ? 5 : level < 12 ? 4 : 3);
   const riseInterval = () => Math.max(3500, 13000 - level * 850);
 
   function newGame() {
@@ -187,7 +190,7 @@
     score = 0; lines = 0; level = startLevel; pieces = 0;
     best = store.get(hiKey(mode), 0); newBest = false;
     dropAcc = 0; lockAcc = 0; soft = false;
-    sinceShift = 0; shiftFx = 0;
+    shiftFx = 0;
     riseAcc = 0; pendingRise = 0;
     if (isMode('rise')) for (let i = 0; i < 3; i++) addGarbage();
     nextType = takeFromBag();
@@ -243,10 +246,7 @@
   }
 
   function afterLock() {
-    if (isMode('shift')) {
-      sinceShift++;
-      if (sinceShift >= shiftEvery()) { sinceShift = 0; shiftBoard(); }
-    }
+    if (isMode('shift')) shiftBoard();
     if (isMode('rise')) {
       while (pendingRise > 0) {
         pendingRise--;
@@ -257,13 +257,10 @@
     spawn();
   }
 
+  // Весь стакан на клетку вправо; столбец, ушедший за правый край, появляется слева.
   function shiftBoard() {
-    shiftDir = Math.random() < 0.5 ? -1 : 1;
-    for (const row of board) {
-      if (shiftDir === 1) row.unshift(row.pop());
-      else row.push(row.shift());
-    }
-    shiftFx = 700;
+    for (const row of board) row.unshift(row.pop());
+    shiftFx = 400;
     sfx('shift');
   }
 
@@ -327,7 +324,7 @@
     // фиксация
     if (collides(cur.m, cur.x, cur.y + 1)) {
       lockAcc += dt;
-      if (lockAcc >= (soft ? 60 : LOCK_MS)) lockPiece();
+      if (lockAcc >= (soft ? SOFT_LOCK_MS : LOCK_MS)) lockPiece();
     }
   }
 
@@ -635,16 +632,10 @@
     text(MODES[mode].name, x, 194, 7);
     const inGame = state !== 'menu';
     if (isMode('shift')) {
-      text('СДВИГ ЧЕРЕЗ', x, 206, 6, 'left', COL.mid);
-      const total = shiftEvery();
-      const left = inGame ? total - sinceShift : total;
-      for (let i = 0; i < total; i++) {
-        ctx.fillStyle = i < left ? COL.dark : COL.off;
-        ctx.fillRect(x + i * 8, 211, 6, 6);
-      }
-      if (shiftFx > 0 && Math.floor(shiftFx / 120) % 2 === 0) {
-        text(shiftDir < 0 ? '<<<' : '>>>', x, 236, 12);
-      }
+      text('КАЖДЫЙ ХОД', x, 206, 6, 'left', COL.mid);
+      // стрелка мигает в момент сдвига, остальное время видна бледно
+      const flash = inGame && shiftFx > 0 && Math.floor(shiftFx / 100) % 2 === 0;
+      text('>>>', x, 224, 12, 'left', flash ? COL.dark : COL.off);
     } else if (isMode('rise')) {
       text('НОВЫЙ РЯД', x, 206, 6, 'left', COL.mid);
       const bw = PW - 6;
@@ -689,15 +680,4 @@
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-
-  // ---------- Офлайн-режим (работает при открытии через http/https) ----------
-  if (location.protocol === 'http:' || location.protocol === 'https:') {
-    const link = document.createElement('link');
-    link.rel = 'manifest';
-    link.href = 'manifest.webmanifest';
-    document.head.appendChild(link);
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => { /* не критично */ });
-    }
-  }
 })();
