@@ -1,6 +1,6 @@
 // Офлайн-кеш Brickfall.
 // При изменении файлов игры увеличивайте VERSION: так установленные копии узнают об обновлении.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = 'brickfall-' + VERSION;
 const FILES = [
   './',

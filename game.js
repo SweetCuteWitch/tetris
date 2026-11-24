@@ -21,6 +21,7 @@
                    40, 40, 40, 40, 40, 40, 40, 40, 40, 25];
   const SOFT_MS = 60;      // скорость при зажатой кнопке «вниз» (мс на клетку)
   const SOFT_LOCK_MS = 150; // фиксация на дне при зажатой кнопке «вниз»
+  const DOUBLE_TAP_MS = 300; // два нажатия «вниз» быстрее этого — мгновенный сброс
   const LOCK_MS = 450;     // задержка перед фиксацией фигуры
   const DAS = 160, ARR = 45;
   const CLEAR_MS = 360;
@@ -66,6 +67,7 @@
   let score = 0, lines = 0, level = startLevel, pieces = 0;
   let best = store.get(hiKey(mode), 0), newBest = false;
   let dropAcc = 0, lockAcc = 0, lockResets = 0, soft = false;
+  let lastDownAt = 0, lastDownPiece = null;   // для распознавания двойного нажатия «вниз»
   let dirs = [], held = 0, dasAcc = 0;
   let shiftFx = 0;
   let riseAcc = 0, pendingRise = 0;
@@ -99,6 +101,7 @@
     move:   [[220, 0, .03]],
     rotate: [[330, 0, .04]],
     lock:   [[110, 0, .06]],
+    drop:   [[160, 0, .03], [70, .03, .1]],
     clear:  [[523, 0, .07], [659, .07, .07], [784, .14, .1]],
     quad:   [[523, 0, .07], [659, .07, .07], [784, .14, .07], [1047, .21, .22]],
     level:  [[392, 0, .08], [523, .08, .08], [659, .16, .08], [784, .24, .18]],
@@ -217,7 +220,16 @@
     if (collides(cur.m, cur.x, cur.y)) gameOver();
   }
 
-  function lockPiece() {
+  // Мгновенный сброс: фигура падает до упора и сразу ставится (2 очка за клетку).
+  function hardDrop() {
+    let n = 0;
+    while (!collides(cur.m, cur.x, cur.y + 1)) { cur.y++; n++; }
+    score += 2 * n;
+    sfx('drop');
+    lockPiece(true);
+  }
+
+  function lockPiece(quiet = false) {
     let out = false;
     eachCell(cur, (x, y) => { if (y < 0) out = true; else board[y][x] = 1; });
     soft = false;            // ускорение нужно нажать заново для следующей фигуры
@@ -233,7 +245,7 @@
       score += LINE_SCORE[full.length] * (level + 1);
       sfx(full.length === 4 ? 'quad' : 'clear');
     } else {
-      sfx('lock');
+      if (!quiet) sfx('lock');
       afterLock();
     }
   }
@@ -388,8 +400,16 @@
         } else if (state === 'play' && k === 'a') {
           rotate(1);               // большая кнопка — по часовой
         } else if (state === 'play' && k === 'down') {
-          soft = true;
-          dropAcc = Math.max(dropAcc, SOFT_MS);
+          const now = performance.now();
+          if (lastDownPiece === cur && now - lastDownAt <= DOUBLE_TAP_MS) {
+            lastDownPiece = null;
+            hardDrop();              // двойное нажатие — фигура падает сразу
+          } else {
+            lastDownAt = now;
+            lastDownPiece = cur;
+            soft = true;             // одно нажатие — ускорение, пока кнопка зажата
+            dropAcc = Math.max(dropAcc, SOFT_MS);
+          }
         } else if (k === 'start') {
           if (state === 'play') { state = 'pause'; held = 0; dirs = []; soft = false; sfx('pause'); }
         }
