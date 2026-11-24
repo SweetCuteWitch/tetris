@@ -343,6 +343,17 @@
 
   const overDone = () => overAcc > ROWS * OVER_ROW_MS + 400;
 
+  // Выход в меню без перезагрузки. Очки прерванной партии тоже идут в рекорд.
+  function quitToMenu() {
+    if (score > best) { best = score; store.set(hiKey(mode), score); }
+    state = 'menu';
+    cur = null; view = null;
+    held = 0; dirs = []; soft = false;
+    clearRows = []; pendingRise = 0;
+    level = startLevel;
+    sfx('move');
+  }
+
   function updatePlay(dt) {
     // автоповтор движения вбок
     if (held) {
@@ -455,17 +466,19 @@
             soft = true;             // одно нажатие — ускорение, пока кнопка зажата
             dropAcc = Math.max(dropAcc, SOFT_MS);
           }
-        } else if (k === 'start') {
+        } else if (k === 'start' || k === 'menu') {
+          // «МЕНЮ» во время игры сначала ставит паузу, чтобы не выйти случайно
           if (state === 'play') { state = 'pause'; held = 0; dirs = []; soft = false; sfx('pause'); }
         }
         break;
 
       case 'pause':
         if (k === 'start' || k === 'a') { state = 'play'; sfx('pause'); }
+        else if (k === 'menu') quitToMenu();
         break;
 
       case 'over':
-        if (overDone() && (k === 'start' || k === 'a')) { state = 'menu'; level = startLevel; sfx('move'); }
+        if (k === 'menu' || (overDone() && (k === 'start' || k === 'a'))) quitToMenu();
         break;
     }
   }
@@ -487,7 +500,7 @@
     ArrowRight: 'right', KeyD: 'right',
     ArrowUp: 'up', KeyW: 'up', KeyX: 'a', Space: 'a',
     ArrowDown: 'down', KeyS: 'down',
-    Enter: 'start', KeyP: 'start', Escape: 'start',
+    Enter: 'start', KeyP: 'start', Escape: 'menu',
     KeyM: 'sound',
   };
   addEventListener('keydown', e => {
@@ -653,12 +666,13 @@
   function drawPause() {
     const cx = BX + COLS * CELL / 2;
     ctx.fillStyle = COL.bg;
-    ctx.fillRect(BX + 14, BY + 115, COLS * CELL - 28, 50);
+    ctx.fillRect(BX + 10, BY + 105, COLS * CELL - 20, 70);
     ctx.strokeStyle = COL.dark;
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(BX + 14, BY + 115, COLS * CELL - 28, 50);
-    text('ПАУЗА', cx, BY + 140, 12, 'center');
-    if (blinkOn()) text('ЖМИ СТАРТ', cx, BY + 155, 7, 'center', COL.mid);
+    ctx.strokeRect(BX + 10, BY + 105, COLS * CELL - 20, 70);
+    text('ПАУЗА', cx, BY + 128, 12, 'center');
+    text('СТАРТ - ИГРАТЬ', cx, BY + 147, 7, 'center', blinkOn() ? COL.dark : COL.mid);
+    text('МЕНЮ - ВЫЙТИ', cx, BY + 162, 7, 'center', COL.mid);
   }
 
   function drawOver() {

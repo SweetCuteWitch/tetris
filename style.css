@@ -166,8 +166,8 @@ canvas {
 .pills {
   width: 100%;
   display: grid;
-  grid-template-columns: 1fr auto auto 1fr;
-  column-gap: calc(var(--u) * 10);
+  grid-template-columns: 1fr auto auto auto 1fr;
+  column-gap: calc(var(--u) * 6);
   margin-top: calc(var(--u) * 4);
 }
 .pill-wrap.install { justify-self: start; }
