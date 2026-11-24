@@ -68,6 +68,16 @@
   let best = store.get(hiKey(mode), 0), newBest = false;
   let dropAcc = 0, lockAcc = 0, lockResets = 0, soft = false;
   let lastDownAt = 0, lastDownPiece = null;   // для распознавания двойного нажатия «вниз»
+  let wallHit = false;                          // фигура уже упёрлась вбок (чтобы не вибрировать каждый кадр)
+
+  // ---------- Вибрация ----------
+  // Браузер не даёт менять силу вибрации, только длительность: чем дольше, тем ощутимее.
+  // Работает на Android; iPhone вибрацию для сайтов не поддерживает.
+  const VIBE = { button: 10, wall: 30, lock: 40, drop: 60 };   // мс
+  function vibrate(ms) {
+    if (!navigator.vibrate) return;
+    try { navigator.vibrate(ms); } catch (e) { /* не поддерживается */ }
+  }
   let dirs = [], held = 0, dasAcc = 0;
   let shiftFx = 0;
   let riseAcc = 0, pendingRise = 0;
@@ -216,7 +226,7 @@
     let top = 0;
     while (m[top].every(v => !v)) top++;
     cur = { type, m, x: Math.floor((COLS - m.length) / 2), y: -top };
-    dropAcc = 0; lockAcc = 0; lockResets = 0;
+    dropAcc = 0; lockAcc = 0; lockResets = 0; wallHit = false;
     if (collides(cur.m, cur.x, cur.y)) gameOver();
   }
 
@@ -229,9 +239,11 @@
     lockPiece(true);
   }
 
-  function lockPiece(quiet = false) {
+  // hard = true — фигуру поставили мгновенным сбросом
+  function lockPiece(hard = false) {
     let out = false;
     eachCell(cur, (x, y) => { if (y < 0) out = true; else board[y][x] = 1; });
+    vibrate(hard ? VIBE.drop : VIBE.lock);
     soft = false;            // ускорение нужно нажать заново для следующей фигуры
     pieces++;
     if (out) { gameOver(); return; }
@@ -245,7 +257,7 @@
       score += LINE_SCORE[full.length] * (level + 1);
       sfx(full.length === 4 ? 'quad' : 'clear');
     } else {
-      if (!quiet) sfx('lock');
+      if (!hard) sfx('lock');
       afterLock();
     }
   }
@@ -312,7 +324,13 @@
     if (held) {
       dasAcc += dt;
       while (dasAcc >= DAS) {
-        if (!tryMove(held, 0)) { dasAcc = DAS; break; }
+        if (!tryMove(held, 0)) {
+          // упёрлись при удержании — толчок один раз, а не каждый кадр
+          if (!wallHit) { wallHit = true; vibrate(VIBE.wall); }
+          dasAcc = DAS;
+          break;
+        }
+        wallHit = false;
         dasAcc -= ARR;
       }
     }
@@ -394,7 +412,10 @@
           dirs.push(d);
           setHeld();
           dasAcc = 0;
-          if (state === 'play' && tryMove(d, 0)) sfx('move');
+          if (state === 'play') {
+            if (tryMove(d, 0)) { sfx('move'); wallHit = false; }
+            else { wallHit = true; vibrate(VIBE.wall); }   // врезались в стенку или блоки
+          }
         } else if (state === 'play' && k === 'up') {
           rotate(-1);              // вверх — против часовой
         } else if (state === 'play' && k === 'a') {
@@ -463,7 +484,7 @@
     if (document.hidden && state === 'play') press('start');
   });
 
-  const buzz = () => { if (navigator.vibrate) { try { navigator.vibrate(8); } catch (e) { /* ignore */ } } };
+  const buzz = () => vibrate(VIBE.button);
 
   // кнопки на экране
   document.querySelectorAll('[data-key]').forEach(btn => {
