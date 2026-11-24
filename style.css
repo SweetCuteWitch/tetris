@@ -172,8 +172,16 @@ canvas {
 }
 .pill-wrap.install { justify-self: start; }
 .pill-wrap.hidden { visibility: hidden; }
-.pill-install { background: #5f7a46; box-shadow: 0 calc(var(--u) * .5) 0 #3e5230; }
-.pill-install:active { box-shadow: none; transform: rotate(-22deg) translateY(calc(var(--u) * .4)); }
+.pill.pill-install { background: #5f7a46; box-shadow: 0 calc(var(--u) * .5) 0 #3e5230; }
+.pill.pill-update { background: #4d5a8c; box-shadow: 0 calc(var(--u) * .5) 0 #323b60; }
+.pill.pill-install:active,
+.pill.pill-update:active { box-shadow: none; transform: rotate(-22deg) translateY(calc(var(--u) * .4)); }
+.pill.pill-update.ready { animation: pill-blink 1s steps(2, jump-none) infinite; }
+@keyframes pill-blink {
+  from { background: #4d5a8c; }
+  to   { background: #d8a13a; }
+}
+#installLabel { white-space: nowrap; }
 
 .install-help {
   position: fixed;

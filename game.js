@@ -128,6 +128,12 @@
     return bag.pop();
   }
 
+  // поворот по часовой стрелке
+  function rotateCW(m) {
+    const n = m.length;
+    return m.map((row, y) => row.map((_, x) => m[n - 1 - x][y]));
+  }
+
   // поворот против часовой стрелки
   function rotateCCW(m) {
     const n = m.length;
@@ -164,9 +170,10 @@
     return true;
   }
 
-  function rotate() {
+  // dir: 1 — по часовой, -1 — против часовой
+  function rotate(dir) {
     if (cur.type === 'O') { sfx('rotate'); return; }
-    const rm = rotateCCW(cur.m);
+    const rm = dir > 0 ? rotateCW(cur.m) : rotateCCW(cur.m);
     for (const [kx, ky] of KICKS) {
       if (!collides(rm, cur.x + kx, cur.y + ky)) {
         cur.m = rm;
@@ -376,8 +383,10 @@
           setHeld();
           dasAcc = 0;
           if (state === 'play' && tryMove(d, 0)) sfx('move');
-        } else if (state === 'play' && (k === 'up' || k === 'a')) {
-          rotate();
+        } else if (state === 'play' && k === 'up') {
+          rotate(-1);              // вверх — против часовой
+        } else if (state === 'play' && k === 'a') {
+          rotate(1);               // большая кнопка — по часовой
         } else if (state === 'play' && k === 'down') {
           soft = true;
           dropAcc = Math.max(dropAcc, SOFT_MS);
