@@ -20,7 +20,11 @@
     { id: 'weird',   name: 'КРИВЫЕ',     desc: ['Фигуры от 1', 'до 5 клеток'] },
     { id: 'sprint',  name: 'СПРИНТ 40',  desc: ['Убери 40 линий', 'как можно быстрее'], time: true },
     { id: 'dig',     name: 'РАСКОПКИ',   desc: ['Расчисти завал.', 'Уровень = высота'], time: true },
+    { id: 'mix',     name: 'МИКС',       desc: ['Каждые 10 линий', 'новое правило'] },
   ];
+  // правила, которые «Микс» включает по очереди
+  const MIX_RULES = ['shift', 'rise', 'mirror', 'narrow', 'gravity', 'weird'];
+  const MIX_NARROW = 2;         // «Узкий» в «Миксе»: стакан сразу шириной 8
   const SPRINT_LINES = 40;
   const MIN_WIDTH = 6;          // «Узкий»: самый узкий стакан
   const FLIP_MS = 500;          // «Зеркало»: анимация отражения
@@ -102,6 +106,7 @@
   let settleAcc = 0;
   let mirrored = false, mirrorLeft = 0, flipAcc = 0;   // «Зеркало»
   let narrow = 0, narrowFx = 0;                 // «Узкий»: сколько столбцов закрыто стенками
+  let mixRule = null, mixStage = 0, mixFx = 0;  // «Микс»: текущее правило, номер смены, анимация
   let dropAcc = 0, lockAcc = 0, lockResets = 0, soft = false;
   let lastDownAt = 0, lastDownPiece = null;   // для распознавания двойного нажатия «вниз»
   let wallHit = false;                          // фигура уже упёрлась вбок (чтобы не вибрировать каждый кадр)
@@ -201,7 +206,7 @@
   function takeFromBag() {
     if (!bag.length) {
       bag = Object.keys(BASE);
-      if (isMode('weird')) bag.push(...shuffle(Object.keys(EXTRA)).slice(0, EXTRA_PER_BAG));
+      if (has('weird')) bag.push(...shuffle(Object.keys(EXTRA)).slice(0, EXTRA_PER_BAG));
       shuffle(bag);
     }
     return bag.pop();
@@ -272,6 +277,27 @@
 
   // ---------- Ход игры ----------
   const isMode = id => MODES[mode].id === id;
+  // действует ли правило: в своём режиме или как текущее правило «Микса»
+  const has = id => isMode(id) || (isMode('mix') && mixRule === id);
+  const modeName = id => MODES.find(m => m.id === id).name;
+
+  // «Микс»: выключает текущее правило и включает случайное другое
+  function switchMixRule() {
+    const old = mixRule;
+    if (old === 'mirror' && mirrored) { mirrored = false; held = 0; dirs = []; }
+    if (old === 'rise') { pendingRise = 0; riseAcc = 0; }
+    if (old === 'narrow') narrow = 0;
+    const choices = MIX_RULES.filter(r => r !== old);
+    mixRule = choices[Math.floor(Math.random() * choices.length)];
+    if (mixRule === 'mirror') mirrorLeft = mirrorEvery();
+    if (mixRule === 'rise') riseAcc = 0;
+    if (mixRule === 'narrow') {
+      narrow = MIX_NARROW;
+      for (const row of board) for (let x = 0; x < COLS; x++) if (isWall(x)) row[x] = 0;
+    }
+    if (old === 'weird' || mixRule === 'weird') bag = [];   // новый набор фигур сразу
+    mixFx = 2200;
+  }
   const gravityMs = () => GRAVITY[Math.min(level, GRAVITY.length - 1)];
   const dropInterval = () => (soft ? Math.min(SOFT_MS, gravityMs()) : gravityMs());
   const riseInterval = () => Math.max(3500, 13000 - level * 850);
@@ -292,6 +318,8 @@
     elapsed = 0; chain = 0; chainShow = 0; chainFx = 0;
     mirrored = false; mirrorLeft = mirrorEvery();
     narrow = 0; narrowFx = 0;
+    mixRule = null; mixStage = 0; mixFx = 0;
+    if (isMode('mix')) switchMixRule();
     if (isMode('rise')) for (let i = 0; i < 3; i++) addGarbage();
     if (isMode('dig')) fillDig(4 + startLevel);
     nextType = takeFromBag();
@@ -388,7 +416,11 @@
     if (level > prev) setTimeout(() => sfx('level'), 250);
     clearRows = [];
     if (isMode('narrow')) applyNarrow();
-    if (isMode('gravity')) { state = 'settle'; settleAcc = 0; return; }
+    if (isMode('mix') && Math.floor(lines / 10) > mixStage) {
+      mixStage = Math.floor(lines / 10);
+      switchMixRule();
+    }
+    if (has('gravity')) { state = 'settle'; settleAcc = 0; return; }
     resolve();
   }
 
@@ -418,7 +450,7 @@
   function afterLock() {
     if (isMode('sprint') && lines >= SPRINT_LINES) { win(); return; }
     if (isMode('dig') && digLeft() === 0) { win(); return; }
-    if (isMode('mirror') && --mirrorLeft <= 0) {
+    if (has('mirror') && --mirrorLeft <= 0) {
       // отражаем стакан; новая фигура появится после анимации
       for (const row of board) row.reverse();
       mirrored = !mirrored;
@@ -428,8 +460,8 @@
       sfx('shift');
       return;
     }
-    if (isMode('shift')) shiftBoard();
-    if (isMode('rise')) {
+    if (has('shift')) shiftBoard();
+    if (has('rise')) {
       while (pendingRise > 0) {
         pendingRise--;
         if (!addGarbage()) { gameOver(); return; }
@@ -494,7 +526,7 @@
     cur = null; view = null;
     held = 0; dirs = []; soft = false;
     clearRows = []; pendingRise = 0;
-    narrow = 0; mirrored = false;
+    narrow = 0; mirrored = false; mixRule = null; mixFx = 0;
     level = startLevel;
     best = loadBest();
     sfx('move');
@@ -532,7 +564,7 @@
     }
 
     // режим «Подъём»: таймер новых рядов
-    if (isMode('rise')) {
+    if (has('rise')) {
       riseAcc += dt;
       const ri = riseInterval();
       if (riseAcc >= ri) { riseAcc -= ri; pendingRise++; sfx('warn'); }
@@ -553,6 +585,7 @@
     if (shiftFx > 0) shiftFx -= dt;
     if (chainFx > 0) chainFx -= dt;
     if (narrowFx > 0) narrowFx -= dt;
+    if (mixFx > 0 && running()) mixFx -= dt;
     if (running()) elapsed += dt;
     if (state === 'play') updatePlay(dt);
     else if (state === 'clear') { clearAcc += dt; if (clearAcc >= CLEAR_MS) finishClear(); }
@@ -881,6 +914,19 @@
     text('МЕНЮ - ВЫЙТИ', cx, BY + 162, 7, 'center', COL.mid);
   }
 
+  // «Микс»: табличка с новым правилом поверх стакана
+  function drawMixBanner() {
+    const cx = BX + COLS * CELL / 2;
+    const y0 = BY + 70;
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(BX + 8, y0, COLS * CELL - 16, 44);
+    ctx.strokeStyle = COL.dark;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(BX + 8, y0, COLS * CELL - 16, 44);
+    text('НОВОЕ ПРАВИЛО', cx, y0 + 15, 7, 'center', COL.mid);
+    if (blinkOn(250) || mixFx < 1200) text(modeName(mixRule), cx, y0 + 34, 12, 'center');
+  }
+
   function drawOver() {
     if (!overDone()) return;
     clearBoardArea();
@@ -923,6 +969,50 @@
     }));
   }
 
+  // подсказка правила на панели; oy — сдвиг вниз (в «Миксе» над ней строка с названием правила)
+  function drawRuleInfo(id, x, oy, inGame) {
+    if (id === 'shift') {
+      text('КАЖДЫЙ ХОД', x, 206 + oy, 6, 'left', COL.mid);
+      // стрелка мигает в момент сдвига, остальное время видна бледно
+      const flash = inGame && shiftFx > 0 && Math.floor(shiftFx / 100) % 2 === 0;
+      text('>>>', x, 224 + oy, 12, 'left', flash ? COL.dark : COL.off);
+    } else if (id === 'rise') {
+      text('НОВЫЙ РЯД', x, 206 + oy, 6, 'left', COL.mid);
+      const bw = PW - 6;
+      ctx.strokeStyle = COL.dark;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, 211.5 + oy, bw, 7);
+      const p = inGame ? Math.min(1, riseAcc / riseInterval()) : 0;
+      ctx.fillStyle = COL.dark;
+      ctx.fillRect(x + 2, 213 + oy, (bw - 3) * p, 4);
+      if (pendingRise > 0 && blinkOn(200)) text('+' + pendingRise + ' РЯД', x, 234 + oy, 9);
+    } else if (id === 'mirror') {
+      text('ОТРАЖЕНИЕ', x, 206 + oy, 6, 'left', COL.mid);
+      const flash = state === 'flip' && blinkOn(100);
+      text('ЧЕРЕЗ ' + (inGame ? mirrorLeft : mirrorEvery()), x, 220 + oy, 9, 'left', flash ? COL.off : COL.dark);
+      text('КНОПКИ', x, 234 + oy, 6, 'left', COL.mid);
+      text(mirrored ? '→ ←' : '← →', x + 30, 234 + oy, 8, 'left', mirrored && blinkOn(400) ? COL.mid : COL.dark);
+    } else if (id === 'narrow') {
+      const wdt = COLS - narrow;
+      text('ШИРИНА', x, 206 + oy, 6, 'left', COL.mid);
+      text(String(wdt), x, 222 + oy, 12, 'left', narrowFx > 0 && blinkOn(100) ? COL.off : COL.dark);
+      if (isMode('narrow') && wdt > MIN_WIDTH) text('УЖЕ ЧЕРЕЗ ' + ((narrow + 1) * 10 - lines), x, 234 + oy, 6, 'left', COL.mid);
+      if (chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 248 + oy, 8);
+    } else if (id === 'gravity') {
+      text('БЛОКИ ПАДАЮТ', x, 206 + oy, 6, 'left', COL.mid);
+      if (chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 222 + oy, 10);
+    } else if (id === 'weird') {
+      text('ФИГУРЫ', x, 206 + oy, 6, 'left', COL.mid);
+      text('1-5 КЛЕТОК', x, 218 + oy, 7);
+    } else if (id === 'sprint') {
+      text('ОСТАЛОСЬ ЛИНИЙ', x, 206 + oy, 6, 'left', COL.mid);
+      text(String(Math.max(0, SPRINT_LINES - lines)), x, 224 + oy, 12);
+    } else if (id === 'dig') {
+      text('РЯДОВ ЗАВАЛА', x, 206 + oy, 6, 'left', COL.mid);
+      text(String(inGame ? digLeft() : 4 + startLevel), x, 224 + oy, 12);
+    }
+  }
+
   function drawPanel() {
     const x = PX;
     if (isTimeMode(mode)) {
@@ -946,46 +1036,19 @@
     // режим
     text(MODES[mode].name, x, 194, 7);
     const inGame = state !== 'menu';
-    if (isMode('shift')) {
-      text('КАЖДЫЙ ХОД', x, 206, 6, 'left', COL.mid);
-      // стрелка мигает в момент сдвига, остальное время видна бледно
-      const flash = inGame && shiftFx > 0 && Math.floor(shiftFx / 100) % 2 === 0;
-      text('>>>', x, 224, 12, 'left', flash ? COL.dark : COL.off);
-    } else if (isMode('rise')) {
-      text('НОВЫЙ РЯД', x, 206, 6, 'left', COL.mid);
-      const bw = PW - 6;
-      ctx.strokeStyle = COL.dark;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x + 0.5, 211.5, bw, 7);
-      const p = inGame ? Math.min(1, riseAcc / riseInterval()) : 0;
-      ctx.fillStyle = COL.dark;
-      ctx.fillRect(x + 2, 213, (bw - 3) * p, 4);
-      if (pendingRise > 0 && blinkOn(200)) text('+' + pendingRise + ' РЯД', x, 234, 9);
-    } else if (isMode('mirror')) {
-      text('ОТРАЖЕНИЕ', x, 206, 6, 'left', COL.mid);
-      const flash = state === 'flip' && blinkOn(100);
-      text(inGame ? 'ЧЕРЕЗ ' + mirrorLeft : 'ЧЕРЕЗ ' + mirrorEvery(), x, 220, 9, 'left', flash ? COL.off : COL.dark);
-      text('КНОПКИ', x, 234, 6, 'left', COL.mid);
-      text(mirrored ? '→ ←' : '← →', x + 30, 234, 8, 'left', mirrored && blinkOn(400) ? COL.mid : COL.dark);
-    } else if (isMode('narrow')) {
-      const wdt = COLS - narrow;
-      text('ШИРИНА', x, 206, 6, 'left', COL.mid);
-      text(String(wdt), x, 222, 12, 'left', narrowFx > 0 && blinkOn(100) ? COL.off : COL.dark);
-      if (wdt > MIN_WIDTH) text('УЖЕ ЧЕРЕЗ ' + ((narrow + 1) * 10 - lines), x, 234, 6, 'left', COL.mid);
-    } else if (isMode('gravity')) {
-      text('БЛОКИ ПАДАЮТ', x, 206, 6, 'left', COL.mid);
-      if (chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 222, 10);
-    } else if (isMode('weird')) {
-      text('ФИГУРЫ', x, 206, 6, 'left', COL.mid);
-      text('1-5 КЛЕТОК', x, 218, 7);
-    } else if (isMode('sprint')) {
-      text('ОСТАЛОСЬ ЛИНИЙ', x, 206, 6, 'left', COL.mid);
-      text(String(Math.max(0, SPRINT_LINES - lines)), x, 224, 12);
-    } else if (isMode('dig')) {
-      text('РЯДОВ ЗАВАЛА', x, 206, 6, 'left', COL.mid);
-      text(String(inGame ? digLeft() : 4 + startLevel), x, 224, 12);
+    if (isMode('mix')) {
+      if (inGame && mixRule) {
+        // текущее правило; мигает, когда только что сменилось
+        text('> ' + modeName(mixRule), x, 206, 7, 'left', mixFx > 0 && blinkOn(150) ? COL.off : COL.dark);
+        drawRuleInfo(mixRule, x, 14, inGame);
+        text('СМЕНА ЧЕРЕЗ ' + ((mixStage + 1) * 10 - lines), x, 270, 6, 'left', COL.mid);
+      } else {
+        text('СЛУЧАЙНЫЕ', x, 206, 6, 'left', COL.mid);
+        text('ПРАВИЛА', x, 215, 6, 'left', COL.mid);
+      }
+    } else {
+      drawRuleInfo(MODES[mode].id, x, 0, inGame);
     }
-    if (isMode('narrow') && chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 248, 8);
 
     text(muted ? '♪ ВЫКЛ' : '♪ ВКЛ', x, 280, 6.5, 'left', COL.mid);
   }
@@ -1000,6 +1063,10 @@
     if (state === 'menu') drawMenu();
     else {
       drawBoard();
+      if (isMode('mix') && mixFx > 0 && mixRule && running()) {
+        drawMixBanner();
+        if (cur && view && state === 'play') drawPiece();   // фигура не прячется за табличкой
+      }
       if (state === 'pause') drawPause();
       if (state === 'over') drawOver();
     }
