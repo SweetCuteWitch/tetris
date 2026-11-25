@@ -9,11 +9,22 @@
   const H = BY + ROWS * CELL + 4;         // 288
   const COL = { bg: '#c5cf9c', off: '#b5c08b', mid: '#6f7c4c', dark: '#26301a' };
 
+  // time: true — рекорд по времени (меньше — лучше), отдельно для каждого стартового уровня
   const MODES = [
-    { id: 'classic', name: 'КЛАССИКА', desc: ['Обычная игра'] },
-    { id: 'shift',   name: 'СДВИГ',    desc: ['После каждой фигуры', 'стакан едет вправо'] },
-    { id: 'rise',    name: 'ПОДЪЁМ',   desc: ['Снизу растут', 'новые ряды'] },
+    { id: 'classic', name: 'КЛАССИКА',   desc: ['Обычная игра'] },
+    { id: 'shift',   name: 'СДВИГ',      desc: ['После каждой фигуры', 'стакан едет вправо'] },
+    { id: 'rise',    name: 'ПОДЪЁМ',     desc: ['Снизу растут', 'новые ряды'] },
+    { id: 'mirror',  name: 'ЗЕРКАЛО',    desc: ['Стакан отражается,', 'кнопки ← → меняются'] },
+    { id: 'narrow',  name: 'УЗКИЙ',      desc: ['Каждые 10 линий', 'стакан сужается'] },
+    { id: 'gravity', name: 'ГРАВИТАЦИЯ', desc: ['После линии блоки', 'осыпаются вниз'] },
+    { id: 'weird',   name: 'КРИВЫЕ',     desc: ['Фигуры от 1', 'до 5 клеток'] },
+    { id: 'sprint',  name: 'СПРИНТ 40',  desc: ['Убери 40 линий', 'как можно быстрее'], time: true },
+    { id: 'dig',     name: 'РАСКОПКИ',   desc: ['Расчисти завал.', 'Уровень = высота'], time: true },
   ];
+  const SPRINT_LINES = 40;
+  const MIN_WIDTH = 6;          // «Узкий»: самый узкий стакан
+  const FLIP_MS = 500;          // «Зеркало»: анимация отражения
+  const SETTLE_MS = 35;         // «Гравитация»: шаг осыпания блоков
 
   // мс на одну клетку падения по уровням
   const GRAVITY = [800, 720, 630, 550, 470, 380, 300, 220, 140, 100,
@@ -26,9 +37,9 @@
   const DAS = 160, ARR = 45;
   const CLEAR_MS = 360;
   const OVER_ROW_MS = 45;
-  const LINE_SCORE = [0, 40, 100, 300, 1200];
+  const LINE_SCORE = [0, 40, 100, 300, 1200, 2000];   // 5 линий — только палкой из 5 клеток или каскадом
 
-  const SHAPES = {
+  const BASE = {
     I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
     O: [[1,1],[1,1]],
     T: [[0,1,0],[1,1,1],[0,0,0]],
@@ -37,6 +48,24 @@
     J: [[1,0,0],[1,1,1],[0,0,0]],
     L: [[0,0,1],[1,1,1],[0,0,0]],
   };
+  // Режим «Кривые»: маленькие фигуры и фигуры из 5 клеток
+  const EXTRA = {
+    o1: [[1]],
+    d2: [[1,1],[0,0]],
+    i3: [[0,0,0],[1,1,1],[0,0,0]],
+    v3: [[1,0],[1,1]],
+    P5: [[1,1,0],[1,1,0],[1,0,0]],
+    U5: [[1,0,1],[1,1,1],[0,0,0]],
+    T5: [[1,1,1],[0,1,0],[0,1,0]],
+    V5: [[1,0,0],[1,0,0],[1,1,1]],
+    W5: [[1,0,0],[1,1,0],[0,1,1]],
+    X5: [[0,1,0],[1,1,1],[0,1,0]],
+    L5: [[1,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+    N5: [[1,1,0,0],[0,1,1,1],[0,0,0,0],[0,0,0,0]],
+    I5: [[0,0,0,0,0],[0,0,0,0,0],[1,1,1,1,1],[0,0,0,0,0],[0,0,0,0,0]],
+  };
+  const EXTRA_PER_BAG = 4;
+  const SHAPES = { ...BASE, ...EXTRA };
   // Смещения при повороте, по порядку. Сначала пробуем опустить фигуру
   // (чтобы она «заползала» в дыру), потом сдвинуть вбок, поднять — в последнюю очередь.
   const KICKS = [[0,0],[0,1],[-1,1],[1,1],[-1,0],[1,0],[-2,0],[2,0],[0,-1]];
@@ -46,7 +75,9 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* нет доступа */ } },
   };
-  const hiKey = m => 'brickfall.hi.' + MODES[m].id;
+  const isTimeMode = m => !!MODES[m].time;
+  const hiKey = (m, lvl) => 'brickfall.hi.' + MODES[m].id + (isTimeMode(m) ? '.' + lvl : '');
+  const loadBest = () => store.get(hiKey(mode, startLevel), 0);
 
   // ---------- Холст ----------
   const cv = document.getElementById('screen');
@@ -56,7 +87,7 @@
   ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
 
   // ---------- Состояние ----------
-  let state = 'menu';             // menu | play | clear | pause | over
+  let state = 'menu';             // menu | play | clear | settle | flip | pause | over
   let mode = store.get('brickfall.mode', 0);
   let startLevel = store.get('brickfall.level', 0);
   if (!(mode >= 0 && mode < MODES.length)) mode = 0;
@@ -65,7 +96,12 @@
   let board = emptyBoard();
   let cur = null, nextType = null, bag = [];
   let score = 0, lines = 0, level = startLevel, pieces = 0;
-  let best = store.get(hiKey(mode), 0), newBest = false;
+  let best = loadBest(), newBest = false, won = false;
+  let elapsed = 0;                              // время партии (для режимов на время)
+  let chain = 0, chainShow = 0, chainFx = 0;    // каскады линий («Гравитация», «Узкий»)
+  let settleAcc = 0;
+  let mirrored = false, mirrorLeft = 0, flipAcc = 0;   // «Зеркало»
+  let narrow = 0, narrowFx = 0;                 // «Узкий»: сколько столбцов закрыто стенками
   let dropAcc = 0, lockAcc = 0, lockResets = 0, soft = false;
   let lastDownAt = 0, lastDownPiece = null;   // для распознавания двойного нажатия «вниз»
   let wallHit = false;                          // фигура уже упёрлась вбок (чтобы не вибрировать каждый кадр)
@@ -143,6 +179,7 @@
     start:  [[440, 0, .06], [660, .07, .1]],
     pause:  [[660, 0, .05]],
     over:   [[392, 0, .15], [330, .15, .15], [262, .3, .15], [196, .45, .4]],
+    win:    [[523, 0, .1], [659, .1, .1], [784, .2, .1], [1047, .3, .1], [784, .4, .08], [1047, .48, .35]],
   };
   function sfx(name) {
     if (muted) return;
@@ -152,16 +189,28 @@
   }
 
   // ---------- Фигуры ----------
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // Мешок: все 7 обычных фигур в случайном порядке; в «Кривых» к ним добавляются 4 необычные.
   function takeFromBag() {
     if (!bag.length) {
-      bag = Object.keys(SHAPES);
-      for (let i = bag.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [bag[i], bag[j]] = [bag[j], bag[i]];
-      }
+      bag = Object.keys(BASE);
+      if (isMode('weird')) bag.push(...shuffle(Object.keys(EXTRA)).slice(0, EXTRA_PER_BAG));
+      shuffle(bag);
     }
     return bag.pop();
   }
+
+  // стенки режима «Узкий»: закрытые столбцы слева и справа
+  const wallL = () => Math.ceil(narrow / 2);
+  const wallR = () => Math.floor(narrow / 2);
+  const isWall = x => x < wallL() || x >= COLS - wallR();
 
   // поворот по часовой стрелке
   function rotateCW(m) {
@@ -180,7 +229,7 @@
       for (let x = 0; x < m.length; x++) {
         if (!m[y][x]) continue;
         const nx = px + x, ny = py + y;
-        if (nx < 0 || nx >= COLS || ny >= ROWS) return true;
+        if (nx < wallL() || nx >= COLS - wallR() || ny >= ROWS) return true;
         if (ny >= 0 && board[ny][nx]) return true;
       }
     }
@@ -227,20 +276,42 @@
   const dropInterval = () => (soft ? Math.min(SOFT_MS, gravityMs()) : gravityMs());
   const riseInterval = () => Math.max(3500, 13000 - level * 850);
 
+  // «Зеркало»: через сколько фигур отражение (чем выше уровень, тем чаще)
+  const mirrorEvery = () => Math.max(5, 10 - Math.floor(level / 2));
+  // в «Спринте» и «Раскопках» скорость не растёт: уровень — это сложность всей партии
+  const fixedLevel = () => isMode('sprint') || isMode('dig');
+
   function newGame() {
     board = emptyBoard();
     bag = [];
     score = 0; lines = 0; level = startLevel; pieces = 0;
-    best = store.get(hiKey(mode), 0); newBest = false;
+    best = loadBest(); newBest = false; won = false;
     dropAcc = 0; lockAcc = 0; soft = false;
     shiftFx = 0;
     riseAcc = 0; pendingRise = 0;
+    elapsed = 0; chain = 0; chainShow = 0; chainFx = 0;
+    mirrored = false; mirrorLeft = mirrorEvery();
+    narrow = 0; narrowFx = 0;
     if (isMode('rise')) for (let i = 0; i < 3; i++) addGarbage();
+    if (isMode('dig')) fillDig(4 + startLevel);
     nextType = takeFromBag();
     state = 'play';
     spawn();
     sfx('start');
   }
+
+  // «Раскопки»: снизу h рядов завала, в каждом одна дырка (не над дыркой соседнего ряда)
+  function fillDig(h) {
+    let prev = -1;
+    for (let y = ROWS - h; y < ROWS; y++) {
+      let hole;
+      do hole = Math.floor(Math.random() * COLS); while (hole === prev);
+      prev = hole;
+      board[y] = new Array(COLS).fill(2);
+      board[y][hole] = 0;
+    }
+  }
+  const digLeft = () => board.filter(r => r.includes(2)).length;
 
   function spawn() {
     const type = nextType;
@@ -248,7 +319,8 @@
     const m = SHAPES[type].map(r => r.slice());
     let top = 0;
     while (m[top].every(v => !v)) top++;
-    cur = { type, m, x: Math.floor((COLS - m.length) / 2), y: -top };
+    const inner = COLS - wallL() - wallR();
+    cur = { type, m, x: wallL() + Math.floor((inner - m.length) / 2), y: -top };
     dropAcc = 0; lockAcc = 0; lockResets = 0; wallHit = false;
     view = { x: cur.x, y: cur.y };   // новая фигура появляется сразу на месте, без подлёта
     if (collides(cur.m, cur.x, cur.y)) gameOver();
@@ -272,18 +344,37 @@
     pieces++;
     if (out) { gameOver(); return; }
     cur = null;
+    chain = 0;
+    if (!fullRows().length && !hard) sfx('lock');
+    resolve();
+  }
+
+  // заполненные ряды (в «Узком» считаются только открытые столбцы)
+  function fullRows() {
     const full = [];
-    for (let y = 0; y < ROWS; y++) if (board[y].every(v => v)) full.push(y);
+    for (let y = 0; y < ROWS; y++) {
+      let ok = true;
+      for (let x = wallL(); x < COLS - wallR(); x++) if (!board[y][x]) { ok = false; break; }
+      if (ok) full.push(y);
+    }
+    return full;
+  }
+
+  // Убирает заполненные ряды; каскад (новые линии после осыпания или сужения) даёт множитель.
+  function resolve() {
+    const full = fullRows();
     if (full.length) {
+      chain++;
       clearRows = full;
       clearAcc = 0;
       state = 'clear';
-      score += LINE_SCORE[full.length] * (level + 1);
-      sfx(full.length === 4 ? 'quad' : 'clear');
-    } else {
-      if (!hard) sfx('lock');
-      afterLock();
+      score += LINE_SCORE[Math.min(full.length, 5)] * (level + 1) * chain;
+      if (chain > 1) { chainShow = chain; chainFx = 1500; }
+      sfx(full.length >= 4 || chain > 1 ? 'quad' : 'clear');
+      return;
     }
+    state = 'play';
+    afterLock();
   }
 
   function finishClear() {
@@ -293,14 +384,50 @@
     }
     const prev = level;
     lines += clearRows.length;
-    level = Math.max(level, startLevel + Math.floor(lines / 10));
+    if (!fixedLevel()) level = Math.max(level, startLevel + Math.floor(lines / 10));
     if (level > prev) setTimeout(() => sfx('level'), 250);
     clearRows = [];
-    state = 'play';
-    afterLock();
+    if (isMode('narrow')) applyNarrow();
+    if (isMode('gravity')) { state = 'settle'; settleAcc = 0; return; }
+    resolve();
+  }
+
+  // «Узкий»: каждые 10 линий стакан теряет столбец (по очереди слева и справа)
+  function applyNarrow() {
+    const n = Math.min(COLS - MIN_WIDTH, Math.floor(lines / 10));
+    if (n <= narrow) return;
+    narrow = n;
+    for (const row of board) for (let x = 0; x < COLS; x++) if (isWall(x)) row[x] = 0;
+    narrowFx = 1500;
+    sfx('shift');
+  }
+
+  // «Гравитация»: каждая висящая клетка опускается на одну клетку. false — всё уже лежит.
+  function settleStep() {
+    let moved = false;
+    for (let y = ROWS - 2; y >= 0; y--)
+      for (let x = 0; x < COLS; x++)
+        if (board[y][x] && !board[y + 1][x]) {
+          board[y + 1][x] = board[y][x];
+          board[y][x] = 0;
+          moved = true;
+        }
+    return moved;
   }
 
   function afterLock() {
+    if (isMode('sprint') && lines >= SPRINT_LINES) { win(); return; }
+    if (isMode('dig') && digLeft() === 0) { win(); return; }
+    if (isMode('mirror') && --mirrorLeft <= 0) {
+      // отражаем стакан; новая фигура появится после анимации
+      for (const row of board) row.reverse();
+      mirrored = !mirrored;
+      mirrorLeft = mirrorEvery();
+      held = 0; dirs = [];
+      state = 'flip'; flipAcc = 0;
+      sfx('shift');
+      return;
+    }
     if (isMode('shift')) shiftBoard();
     if (isMode('rise')) {
       while (pendingRise > 0) {
@@ -332,25 +459,44 @@
   function gameOver() {
     state = 'over';
     overAcc = 0;
+    won = false;
     held = 0; dirs = []; soft = false;
-    if (score > best) {
+    // в режимах на время проигрыш рекорд не ставит
+    if (!isTimeMode(mode) && score > best) {
       best = score;
       newBest = true;
-      store.set(hiKey(mode), score);
+      store.set(hiKey(mode, startLevel), score);
     }
     sfx('over');
   }
 
+  // «Спринт» и «Раскопки»: цель достигнута
+  function win() {
+    state = 'over';
+    won = true;
+    overAcc = ROWS * OVER_ROW_MS;   // без анимации заполнения, только короткая пауза
+    cur = null;
+    held = 0; dirs = []; soft = false;
+    if (!best || elapsed < best) {
+      best = elapsed;
+      newBest = true;
+      store.set(hiKey(mode, startLevel), Math.round(elapsed));
+    }
+    sfx('win');
+  }
+
   const overDone = () => overAcc > ROWS * OVER_ROW_MS + 400;
 
-  // Выход в меню без перезагрузки. Очки прерванной партии тоже идут в рекорд.
+  // Выход в меню без перезагрузки. Очки прерванной партии тоже идут в рекорд (кроме режимов на время).
   function quitToMenu() {
-    if (score > best) { best = score; store.set(hiKey(mode), score); }
+    if (!isTimeMode(mode) && score > best) { best = score; store.set(hiKey(mode, startLevel), score); }
     state = 'menu';
     cur = null; view = null;
     held = 0; dirs = []; soft = false;
     clearRows = []; pendingRise = 0;
+    narrow = 0; mirrored = false;
     level = startLevel;
+    best = loadBest();
     sfx('move');
   }
 
@@ -399,11 +545,25 @@
     }
   }
 
+  // партия идёт (не меню, не пауза, не конец)
+  const running = () => state === 'play' || state === 'clear' || state === 'settle' || state === 'flip';
+
   function update(dt) {
     blink += dt;
     if (shiftFx > 0) shiftFx -= dt;
+    if (chainFx > 0) chainFx -= dt;
+    if (narrowFx > 0) narrowFx -= dt;
+    if (running()) elapsed += dt;
     if (state === 'play') updatePlay(dt);
     else if (state === 'clear') { clearAcc += dt; if (clearAcc >= CLEAR_MS) finishClear(); }
+    else if (state === 'settle') {
+      settleAcc += dt;
+      while (state === 'settle' && settleAcc >= SETTLE_MS) {
+        settleAcc -= SETTLE_MS;
+        if (!settleStep()) resolve();   // всё осело — проверяем новые линии
+      }
+    }
+    else if (state === 'flip') { flipAcc += dt; if (flipAcc >= FLIP_MS) { state = 'play'; spawn(); } }
     else if (state === 'over') overAcc += dt;
     updateView(dt);
   }
@@ -426,12 +586,13 @@
       case 'menu':
         if (k === 'left' || k === 'right') {
           mode = (mode + (k === 'left' ? -1 : 1) + MODES.length) % MODES.length;
-          best = store.get(hiKey(mode), 0);
+          best = loadBest();
           store.set('brickfall.mode', mode);
           sfx('move');
         } else if (k === 'up' || k === 'down') {
           startLevel = Math.max(0, Math.min(9, startLevel + (k === 'up' ? 1 : -1)));
           level = startLevel;
+          best = loadBest();
           store.set('brickfall.level', startLevel);
           sfx('move');
         } else if (k === 'a' || k === 'start') {
@@ -441,8 +602,10 @@
 
       case 'play':
       case 'clear':
+      case 'settle':
+      case 'flip':
         if (k === 'left' || k === 'right') {
-          const d = k === 'left' ? -1 : 1;
+          const d = (k === 'left' ? -1 : 1) * (mirrored ? -1 : 1);   // «Зеркало»: кнопки меняются местами
           dirs = dirs.filter(v => v !== d);
           dirs.push(d);
           setHeld();
@@ -485,7 +648,7 @@
 
   function release(k) {
     if (k === 'left' || k === 'right') {
-      const d = k === 'left' ? -1 : 1;
+      const d = (k === 'left' ? -1 : 1) * (mirrored ? -1 : 1);
       dirs = dirs.filter(v => v !== d);
       setHeld();
       dasAcc = 0;
@@ -603,21 +766,64 @@
   }
 
   const pad = (n, len = 6) => String(n).padStart(len, '0');
+  // время в виде 1:23.45
+  function fmtTime(ms) {
+    const m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60, cs = Math.floor(ms / 10) % 100;
+    return m + ':' + pad(s, 2) + '.' + pad(cs, 2);
+  }
+  const bestText = () => (isTimeMode(mode) ? (best ? fmtTime(best) : '-:--.--') : pad(best));
   const blinkOn = (period = 500) => Math.floor(blink / period) % 2 === 0;
 
+  // клетка завала в «Раскопках»: сплошная, чтобы было видно, что осталось расчистить
+  function drawRubble(x, y) {
+    ctx.fillStyle = COL.dark;
+    ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+    ctx.fillStyle = COL.mid;
+    ctx.fillRect(x + 4, y + 4, 2, 2);
+    ctx.fillRect(x + 8, y + 8, 2, 2);
+  }
+
+  // стенка «Узкого» стакана — штриховка
+  function drawWall(x) {
+    const px = BX + x * CELL;
+    ctx.fillStyle = COL.mid;
+    ctx.fillRect(px, BY, CELL, ROWS * CELL);
+    ctx.fillStyle = COL.off;
+    for (let y = 0; y < ROWS * CELL; y += 6) ctx.fillRect(px, BY + y, CELL, 2);
+  }
+
   function drawBoard() {
-    const lit = board.map(r => r.map(v => (v ? 1 : 0)));
+    let lit = board.map(r => r.slice());
     if (state === 'clear' && Math.floor(clearAcc / 90) % 2 === 1) {
       for (const y of clearRows) lit[y].fill(0);
     }
-    if (state === 'over') {
+    if (state === 'over' && !won) {
       const n = Math.min(ROWS, Math.floor(overAcc / OVER_ROW_MS));
       for (let y = ROWS - n; y < ROWS; y++) lit[y].fill(1);
     }
     if (state === 'pause') for (const r of lit) r.fill(0);
+
+    // «Зеркало»: стакан «переворачивается» — сжимается по ширине и раскрывается отражённым
+    ctx.save();
+    if (state === 'flip') {
+      const t = Math.min(1, flipAcc / FLIP_MS);
+      if (t < 0.5) lit = lit.map(r => r.slice().reverse());   // первая половина — ещё старый вид
+      const sx = Math.max(0.04, Math.abs(1 - 2 * t));
+      clearBoardArea();
+      const cx = BX + COLS * CELL / 2;
+      ctx.translate(cx, 0);
+      ctx.scale(sx, 1);
+      ctx.translate(-cx, 0);
+    }
     for (let y = 0; y < ROWS; y++)
-      for (let x = 0; x < COLS; x++)
-        drawCell(BX + x * CELL, BY + y * CELL, lit[y][x] ? COL.dark : COL.off);
+      for (let x = 0; x < COLS; x++) {
+        if (isWall(x)) continue;
+        const px = BX + x * CELL, py = BY + y * CELL;
+        if (lit[y][x] === 2) drawRubble(px, py);
+        else drawCell(px, py, lit[y][x] ? COL.dark : COL.off);
+      }
+    ctx.restore();
+    for (let x = 0; x < COLS; x++) if (isWall(x)) drawWall(x);
     if (cur && view && (state === 'play' || state === 'over')) drawPiece();
   }
 
@@ -650,15 +856,15 @@
       for (let x = 0; x < 3; x++)
         if (deco[y][x]) drawCell(cx - 15 + x * 10, 72 + y * 10, COL.dark, 10);
 
-    text('РЕЖИМ', cx, 112, 7, 'center', COL.mid);
+    text('РЕЖИМ ' + (mode + 1) + '/' + MODES.length, cx, 112, 7, 'center', COL.mid);
     text('← ' + MODES[mode].name + ' →', cx, 126, 9, 'center');
     MODES[mode].desc.forEach((l, i) => text(l, cx, 140 + i * 9, 6.5, 'center', COL.mid));
 
     text('УРОВЕНЬ', cx, 174, 7, 'center', COL.mid);
     text('↓ ' + startLevel + ' ↑', cx, 189, 11, 'center');
 
-    text('РЕКОРД', cx, 212, 7, 'center', COL.mid);
-    text(pad(best), cx, 225, 10, 'center');
+    text(isTimeMode(mode) ? 'РЕКОРД (УР. ' + startLevel + ')' : 'РЕКОРД', cx, 212, 7, 'center', COL.mid);
+    text(bestText(), cx, 225, 10, 'center');
 
     if (blinkOn()) text('ЖМИ СТАРТ', cx, 258, 9, 'center');
   }
@@ -679,10 +885,15 @@
     if (!overDone()) return;
     clearBoardArea();
     const cx = BX + COLS * CELL / 2;
-    text('КОНЕЦ', cx, 60, 14, 'center');
-    text('ИГРЫ', cx, 78, 14, 'center');
-    text('ОЧКИ', cx, 112, 7, 'center', COL.mid);
-    text(pad(score), cx, 127, 12, 'center');
+    if (won) text('ФИНИШ!', cx, 70, 16, 'center');
+    else { text('КОНЕЦ', cx, 60, 14, 'center'); text('ИГРЫ', cx, 78, 14, 'center'); }
+    if (isTimeMode(mode)) {
+      text('ВРЕМЯ', cx, 112, 7, 'center', COL.mid);
+      text(fmtTime(elapsed), cx, 127, 12, 'center');
+    } else {
+      text('ОЧКИ', cx, 112, 7, 'center', COL.mid);
+      text(pad(score), cx, 127, 12, 'center');
+    }
     text('ЛИНИИ', cx, 148, 7, 'center', COL.mid);
     text(String(lines), cx, 162, 10, 'center');
     if (newBest && blinkOn(350)) {
@@ -704,7 +915,7 @@
       r0 = Math.min(r0, ry); r1 = Math.max(r1, ry);
       c0 = Math.min(c0, rx); c1 = Math.max(c1, rx);
     }));
-    const s = 10;
+    const s = Math.max(c1 - c0, r1 - r0) >= 4 ? 8 : 10;   // фигуры из 5 клеток мельче, чтобы влезли
     const ox = x + 23.5 - ((c1 - c0 + 1) * s) / 2 - c0 * s;
     const oy = y + 23.5 - ((r1 - r0 + 1) * s) / 2 - r0 * s;
     m.forEach((row, ry) => row.forEach((v, rx) => {
@@ -714,15 +925,21 @@
 
   function drawPanel() {
     const x = PX;
-    const shownBest = Math.max(best, score);
-    text('ОЧКИ', x, 13, 7, 'left', COL.mid);
-    text(pad(score), x, 25, 10);
-    text('РЕКОРД', x, 41, 7, 'left', COL.mid);
-    text(pad(shownBest), x, 53, 10);
+    if (isTimeMode(mode)) {
+      text('ВРЕМЯ', x, 13, 7, 'left', COL.mid);
+      text(fmtTime(state === 'menu' ? 0 : elapsed), x, 25, 10);
+      text('РЕКОРД', x, 41, 7, 'left', COL.mid);
+      text(bestText(), x, 53, 10);
+    } else {
+      text('ОЧКИ', x, 13, 7, 'left', COL.mid);
+      text(pad(score), x, 25, 10);
+      text('РЕКОРД', x, 41, 7, 'left', COL.mid);
+      text(pad(Math.max(best, score)), x, 53, 10);
+    }
     text('УРОВЕНЬ', x, 69, 7, 'left', COL.mid);
     text(String(level), x, 81, 10);
     text('ЛИНИИ', x, 97, 7, 'left', COL.mid);
-    text(String(lines), x, 109, 10);
+    text(isMode('sprint') ? lines + '/' + SPRINT_LINES : String(lines), x, 109, 10);
     text('СЛЕД.', x, 125, 7, 'left', COL.mid);
     drawNext(x, 130);
 
@@ -744,7 +961,31 @@
       ctx.fillStyle = COL.dark;
       ctx.fillRect(x + 2, 213, (bw - 3) * p, 4);
       if (pendingRise > 0 && blinkOn(200)) text('+' + pendingRise + ' РЯД', x, 234, 9);
+    } else if (isMode('mirror')) {
+      text('ОТРАЖЕНИЕ', x, 206, 6, 'left', COL.mid);
+      const flash = state === 'flip' && blinkOn(100);
+      text(inGame ? 'ЧЕРЕЗ ' + mirrorLeft : 'ЧЕРЕЗ ' + mirrorEvery(), x, 220, 9, 'left', flash ? COL.off : COL.dark);
+      text('КНОПКИ', x, 234, 6, 'left', COL.mid);
+      text(mirrored ? '→ ←' : '← →', x + 30, 234, 8, 'left', mirrored && blinkOn(400) ? COL.mid : COL.dark);
+    } else if (isMode('narrow')) {
+      const wdt = COLS - narrow;
+      text('ШИРИНА', x, 206, 6, 'left', COL.mid);
+      text(String(wdt), x, 222, 12, 'left', narrowFx > 0 && blinkOn(100) ? COL.off : COL.dark);
+      if (wdt > MIN_WIDTH) text('УЖЕ ЧЕРЕЗ ' + ((narrow + 1) * 10 - lines), x, 234, 6, 'left', COL.mid);
+    } else if (isMode('gravity')) {
+      text('БЛОКИ ПАДАЮТ', x, 206, 6, 'left', COL.mid);
+      if (chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 222, 10);
+    } else if (isMode('weird')) {
+      text('ФИГУРЫ', x, 206, 6, 'left', COL.mid);
+      text('1-5 КЛЕТОК', x, 218, 7);
+    } else if (isMode('sprint')) {
+      text('ОСТАЛОСЬ ЛИНИЙ', x, 206, 6, 'left', COL.mid);
+      text(String(Math.max(0, SPRINT_LINES - lines)), x, 224, 12);
+    } else if (isMode('dig')) {
+      text('РЯДОВ ЗАВАЛА', x, 206, 6, 'left', COL.mid);
+      text(String(inGame ? digLeft() : 4 + startLevel), x, 224, 12);
     }
+    if (isMode('narrow') && chainFx > 0 && blinkOn(150)) text('ЦЕПЬ x' + chainShow, x, 248, 8);
 
     text(muted ? '♪ ВЫКЛ' : '♪ ВКЛ', x, 280, 6.5, 'left', COL.mid);
   }
@@ -764,7 +1005,7 @@
     }
     drawPanel();
 
-    const on = state === 'play' || state === 'clear';
+    const on = running();
     if (on !== ledOn) { ledOn = on; led.classList.toggle('on', on); }
   }
 
